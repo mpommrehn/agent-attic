@@ -187,9 +187,12 @@ to commit.
 tests/test-attic.sh
 ```
 
-28 tests covering root resolution, deduplication, filenames with spaces,
+30 tests covering root resolution, deduplication, filenames with spaces,
 exclusions, the size limit, list and restore, external files, and both hooks.
-The suite runs in a throwaway root and cleans up after itself.
+Two are security regressions for a case-sensitivity bypass that let a write
+past the immutable-zone guard by changing the case of a path. The suite runs in
+a throwaway root and cleans up after itself, and CI runs it on macOS and Linux
+because the filesystem differences between them are load-bearing here.
 
 ## Why this exists
 
