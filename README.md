@@ -35,9 +35,9 @@ never destroy the newer one.
 
 ## What it does not do
 
-Read [docs/scope.md](docs/scope.md) before relying on this. The short version:
-it protects against **overwrites**, not against unsaved in-editor work, and not
-against losing the directory. Those are different problems with different
+Read [docs/scope.md](docs/scope.md) before relying on this. It protects against
+**overwrites**, not against unsaved in-editor work, and not against losing the
+directory. Those are different problems with different
 owners, and treating one mechanism as if it covered all three is how people end
 up confidently unprotected.
 
@@ -204,7 +204,8 @@ wrapper, and both hooks.
 Two are security regressions for a case-sensitivity bypass that let a write
 past the immutable-zone guard by changing the case of a path. The suite runs in
 a throwaway root and cleans up after itself, and CI runs it on macOS and Linux
-because the filesystem differences between them are load-bearing here.
+because the filesystem differences between them decide whether the zone guard
+    # works at all.
 
 ## Why this exists
 

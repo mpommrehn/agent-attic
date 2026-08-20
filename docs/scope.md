@@ -61,7 +61,7 @@ so nothing in the feedback loop noticed.
 
 `every document`, `active document`, `front window`, and `quit` are the same
 mistake wearing different words. Version stores cannot save you from that
-class of bug, which is exactly why the rule is written down instead.
+class of bug, so the rule is written down instead.
 
 ## Rules for agents working in a root that uses attic
 
