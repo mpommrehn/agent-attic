@@ -156,6 +156,10 @@ your own words. Without `attic.conf`, the guard denies nothing.
 | `ATTIC_EXCLUDE` | empty | Colon-separated globs to never store |
 | `ATTIC_CONF` | `<repo>/attic.conf` | Immutable-zone rules |
 
+`ATTIC_ROOT` is worth setting explicitly in any automated context. Discovery
+walks up from the current directory, which is fine interactively and surprising
+inside a hook or a scheduled job that starts somewhere you did not choose.
+
 Always excluded: the store itself, `.git`, `node_modules`, `.venv`,
 `site-packages`, `__pycache__`, `target`, `dist`, `build`, temp directories,
 and editor swap and lock files.
