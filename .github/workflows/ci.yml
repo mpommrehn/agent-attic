@@ -9,7 +9,7 @@ on:
 jobs:
   test:
     # Both matter. macOS is where this is developed and where the
-    # case-insensitive filesystem behaviour the zone guard depends on is real.
+    # case-insensitive filesystem behavior the zone guard depends on is real.
     # Ubuntu is where the BSD-vs-GNU differences show up: shasum against
     # sha1sum, mktemp templates, and a case-sensitive filesystem.
     strategy:

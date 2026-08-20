@@ -16,8 +16,9 @@ false confidence, which is worse than having no backup at all.
 
 - **Any file an agent overwrites through a file-editing tool.** The snapshot
   hook runs before the write and keeps the previous bytes.
-- **Any file a script overwrites**, provided the script calls `attic-snap`
-  first. This is the part that depends on you, not on the tool.
+- **Any file a script overwrites**, when the script is run through
+  `attic-run`, or calls `attic-snap` itself first. This is the part that
+  depends on you remembering, not on the tool noticing.
 - **Files outside the working root.** They are mirrored under `_external/`, so
   a document living elsewhere on the machine is covered the same way.
 - **Records you want frozen.** Configured paths are denied to agents outright
@@ -66,8 +67,8 @@ class of bug, which is exactly why the rule is written down instead.
 
 1. **Never overwrite a file you did not create in this session without a
    snapshot first.** The hook covers file-tool edits. Anything writing through
-   a script, a generator, or a shell redirect is your responsibility: call
-   `attic-snap` before it runs.
+   a script, a generator, or a shell redirect is your responsibility: run it
+   under `attic-run`, or call `attic-snap` before it.
 2. **Never write into a configured immutable zone.** If something seems to
    require it, that is a signal the plan is wrong, not that the guard is.
 3. **Never close, quit, or discard state in an application you did not open.**

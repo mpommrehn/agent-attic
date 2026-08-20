@@ -84,12 +84,23 @@ attic-snap --list path/to/file     # what versions exist
 
 ### Around a script that writes files
 
-The hook below cannot see writes made by a generator, a build step, or a shell
-redirect. Snapshot first:
+The snapshot hook only sees an agent's own file-editing tools. A generator, a
+build step, a formatter, or a shell redirect is invisible to it. `attic-run`
+closes that gap: it snapshots first, then runs the command.
 
 ```bash
-attic-snap report.docx && node generate-report.js
+attic-run report.docx -- node generate-report.js
+attic-run --dir src -- npx prettier --write src/
+attic-run schema.sql -- ./migrate.sh
 ```
+
+Everything before `--` is a file or `--dir` to preserve; everything after is
+the command, passed through untouched. Snapshots happen first and
+unconditionally, so if the command then fails, writes garbage, or is
+interrupted halfway, the previous version is already stored.
+
+The exit status is the command's own and the wrapper's messages go to stderr,
+so it drops into a pipeline or a Makefile without changing behavior.
 
 ### Automatically, for every agent edit
 
@@ -187,8 +198,9 @@ to commit.
 tests/test-attic.sh
 ```
 
-30 tests covering root resolution, deduplication, filenames with spaces,
-exclusions, the size limit, list and restore, external files, and both hooks.
+42 tests covering root resolution, deduplication, filenames with spaces,
+exclusions, the size limit, list and restore, external files, the command
+wrapper, and both hooks.
 Two are security regressions for a case-sensitivity bypass that let a write
 past the immutable-zone guard by changing the case of a path. The suite runs in
 a throwaway root and cleans up after itself, and CI runs it on macOS and Linux

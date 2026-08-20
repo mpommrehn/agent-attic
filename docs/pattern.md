@@ -47,7 +47,7 @@ three things go wrong at once.
 a skill loads *because it is about to do that exact task* does not.
 
 **Copies drift silently.** Nothing errors when two files disagree. The agent
-follows whichever it read most recently, and the behaviour looks like
+follows whichever it read most recently, and the behavior looks like
 randomness rather than like a stale document.
 
 **Circumstance changes force edits to method.** If your immutable zones are

@@ -26,7 +26,7 @@ TESTTMP="$REPO/.testtmp"
 new_root() {
   mkdir -p "$TESTTMP"
   local d; d=$(mktemp -d "$TESTTMP/root.XXXXXX")
-  d=$(cd "$d" && pwd)          # normalise before anything compares against it
+  d=$(cd "$d" && pwd)          # normalize before anything compares against it
   touch "$d/.attic-root"
   printf '%s' "$d"
 }
@@ -165,6 +165,55 @@ if command -v jq >/dev/null 2>&1; then
 else
   echo "  skip  hook tests (jq not installed)"
 fi
+
+# --- attic-run ----------------------------------------------------------
+echo
+echo "attic-run tests"
+RUN="$REPO/bin/attic-run"
+R3=$(new_root); cd "$R3" || exit 1
+
+printf 'original\n' > out.txt
+"$RUN" out.txt -- sh -c 'printf regenerated > out.txt' >/dev/null 2>&1
+check "runs the command" "$(cat out.txt)" "regenerated"
+grep -rq 'original' .attic/out.txt 2>/dev/null \
+  && ok "snapshots the target before the command runs" \
+  || bad "snapshots the target before the command runs"
+
+# The snapshot must survive a failing command; that is the whole point.
+printf 'good content\n' > risky.txt
+"$RUN" risky.txt -- sh -c 'printf broken > risky.txt; exit 3' >/dev/null 2>&1
+check "propagates the command's exit status" "$?" "3"
+grep -rq 'good content' .attic/risky.txt 2>/dev/null \
+  && ok "snapshot survives a failing command" || bad "snapshot survives a failing command"
+
+"$RUN" missing.txt -- true >/dev/null 2>&1
+check "a missing target is not an error" "$?" "0"
+
+# --dir
+mkdir -p tree/sub && printf 'a\n' > tree/a.txt && printf 'b\n' > tree/sub/b.txt
+"$RUN" --dir tree -- true >/dev/null 2>&1
+[ -d .attic/tree/a.txt ] && [ -d .attic/tree/sub/b.txt ] \
+  && ok "--dir snapshots the whole tree" || bad "--dir snapshots the whole tree"
+
+mkdir -p tree/node_modules && printf 'dep\n' > tree/node_modules/x.js
+"$RUN" --dir tree -- true >/dev/null 2>&1
+[ ! -d .attic/tree/node_modules ] && ok "--dir honors exclusions" || bad "--dir honors exclusions"
+
+# Argument handling
+"$RUN" out.txt echo hi >/dev/null 2>&1
+check "missing -- is rejected" "$?" "2"
+"$RUN" out.txt -- >/dev/null 2>&1
+check "empty command is rejected" "$?" "2"
+"$RUN" --dir nonexistent -- true >/dev/null 2>&1
+check "a missing --dir is rejected" "$?" "2"
+
+# Arguments must reach the command untouched.
+out=$("$RUN" out.txt -- printf '%s|%s' 'two words' 'x*y')
+check "command arguments are passed verbatim" "$out" "two words|x*y"
+
+printf 'v1\n' > "spaced name.txt"
+"$RUN" "spaced name.txt" -- true >/dev/null 2>&1
+[ -d ".attic/spaced name.txt" ] && ok "handles a target with spaces" || bad "handles a target with spaces"
 
 cd / || exit 1; rm -rf "$TESTTMP" 2>/dev/null
 echo

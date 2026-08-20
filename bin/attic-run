@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# attic-run — snapshot what a command is about to overwrite, then run it.
+#
+#   attic-run FILE... -- COMMAND [ARG...]      snapshot each FILE, then run
+#   attic-run --dir DIR [--dir DIR2] -- CMD    snapshot everything under DIR
+#
+# The PreToolUse hook only sees an agent's own file-editing tools. Anything
+# writing through a generator, a build step, a formatter, or a shell redirect
+# is invisible to it. This closes that gap:
+#
+#   attic-run report.docx -- node generate-report.js
+#   attic-run --dir src -- npx prettier --write src/
+#   attic-run schema.sql -- ./migrate.sh
+#
+# Snapshots happen first and unconditionally. If the command then fails, or
+# writes garbage, or is interrupted halfway, the previous version is already
+# stored. Exit status is the command's own, so this drops into a pipeline
+# without changing its behavior.
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SNAP="${ATTIC_SNAP_BIN:-$HERE/attic-snap}"
+
+usage() {
+  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+  exit "${1:-1}"
+}
+
+[ $# -eq 0 ] && usage 1
+case "$1" in -h|--help) usage 0 ;; esac
+
+targets=()
+dirs=()
+
+# Everything before -- is a target. Everything after is the command, taken
+# verbatim: no globbing, no re-splitting, no interpretation.
+saw_sep=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --) saw_sep=1; shift; break ;;
+    --dir)
+      shift
+      [ $# -gt 0 ] || { echo "attic-run: --dir needs a directory" >&2; exit 2; }
+      dirs+=("$1"); shift ;;
+    --dir=*) dirs+=("${1#--dir=}"); shift ;;
+    -*) echo "attic-run: unknown option: $1" >&2; exit 2 ;;
+    *) targets+=("$1"); shift ;;
+  esac
+done
+
+if [ "$saw_sep" -eq 0 ]; then
+  echo "attic-run: missing -- before the command." >&2
+  echo "           Without it there is no way to tell a file from a command." >&2
+  exit 2
+fi
+[ $# -gt 0 ] || { echo "attic-run: no command after --" >&2; exit 2; }
+
+# --- snapshot ------------------------------------------------------------
+# Everything this wrapper says goes to stderr. The command owns stdout, so
+# `attic-run f -- cat f | grep x` pipes the command's output and not ours.
+for f in ${targets+"${targets[@]}"}; do
+  if [ -f "$f" ]; then
+    "$SNAP" "$f" >&2
+  else
+    echo "attic-run: no prior version of $f (nothing to preserve)" >&2
+  fi
+done
+
+for d in ${dirs+"${dirs[@]}"}; do
+  if [ ! -d "$d" ]; then
+    echo "attic-run: not a directory: $d" >&2
+    exit 2
+  fi
+  # -print0 so newlines in filenames survive. attic-snap applies its own
+  # exclusions, so build output and dependency trees drop out here.
+  while IFS= read -r -d '' f; do
+    "$SNAP" "$f" >&2
+  done < <(find "$d" -type f -print0 2>/dev/null)
+done
+
+# --- run -----------------------------------------------------------------
+"$@"
+exit $?
