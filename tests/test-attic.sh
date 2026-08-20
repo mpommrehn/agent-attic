@@ -148,6 +148,19 @@ if command -v jq >/dev/null 2>&1; then
 
   out=$(printf '{"tool_input":{"file_path":"/x/audit-logs/y.md"}}' | ATTIC_CONF=/nonexistent bash "$REPO/hooks/immutable-zone-guard.sh")
   check "zone guard denies nothing without a config" "$out" ""
+
+  # Security regression: a case-insensitive filesystem makes /x/AUDIT-LOGS/y.md
+  # and /x/audit-logs/y.md the same file, so a case-sensitive guard denies one
+  # and waves the other through. Found by an adversarial pass, not by design.
+  out=$(printf '{"tool_input":{"file_path":"/x/AUDIT-LOGS/y.md"}}' | ATTIC_CONF="$CONF" bash "$REPO/hooks/immutable-zone-guard.sh")
+  echo "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+    && ok "zone guard is not bypassed by changing case" \
+    || bad "zone guard is not bypassed by changing case" "$out"
+
+  out=$(printf '{"tool_input":{"file_path":"/x/Audit-Logs/Y.MD"}}' | ATTIC_CONF="$CONF" bash "$REPO/hooks/immutable-zone-guard.sh")
+  echo "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+    && ok "zone guard matches mixed case in path and extension" \
+    || bad "zone guard matches mixed case in path and extension" "$out"
   rm -f "$CONF"
 else
   echo "  skip  hook tests (jq not installed)"

@@ -38,6 +38,12 @@ false confidence, which is worse than having no backup at all.
 - **Anything outside a file write.** A file deleted with `rm`, a database row
   dropped, a remote resource changed by an API call: none of these pass
   through the hook.
+- **Case-sensitivity differences between filesystems.** Immutable zones are
+  matched case-insensitively on purpose, because macOS and Windows treat
+  `Records/` and `records/` as the same directory. On a case-sensitive
+  filesystem this can deny a path that merely resembles a protected one. That
+  is the safe direction: a false deny costs one config edit, a false allow
+  costs the record.
 - **Concurrency guarantees.** Two processes snapshotting the same file at the
   same instant is not coordinated. In practice the content hash makes this
   harmless, but it is not a transactional store.

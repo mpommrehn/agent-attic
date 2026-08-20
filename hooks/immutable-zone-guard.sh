@@ -18,6 +18,16 @@ CONF="${ATTIC_CONF:-$HERE/../attic.conf}"
 
 command -v jq >/dev/null 2>&1 || exit 0
 
+# Match zone patterns case-insensitively.
+#
+# This is a security property, not a convenience. macOS and Windows default to
+# case-insensitive filesystems, so /work/Records/f.md and /work/records/f.md are
+# the same file; a case-sensitive guard denies one and waves the other straight
+# through. On a case-sensitive filesystem this errs toward denying a path that
+# merely looks like a protected one, which is the right direction to err: a
+# false deny costs one config edit, a false allow costs the record.
+shopt -s nocasematch 2>/dev/null || true
+
 deny() {
   jq -nc --arg reason "$1" \
     '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $reason}}'
