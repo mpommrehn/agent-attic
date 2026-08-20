@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# attic-snap — keep a copy of a file before something overwrites it.
+#
+#   attic-snap <file>...                    snapshot one or more files
+#   attic-snap --list <file>                show stored versions of a file
+#   attic-snap --restore <version> <file>   put an old version back
+#   attic-snap --root                       print the resolved working root
+#
+# One copy per distinct content: the stored name carries a UTC timestamp and
+# the first 8 characters of the SHA-1, and re-running on unchanged bytes is a
+# no-op. That makes it safe to call on every write without accumulating noise.
+#
+# Nothing is ever pruned automatically. See docs/scope.md for what this does
+# and, more importantly, what it does not do.
+set -euo pipefail
+
+# --- Resolving the working root -----------------------------------------
+# In order: an explicit ATTIC_ROOT, a directory marked with .attic-root or an
+# existing .attic, then the git top level. Explicit beats implicit, and a
+# marker file beats git so a repo can hold several independent roots.
+resolve_root() {
+  if [ -n "${ATTIC_ROOT:-}" ]; then
+    [ -d "$ATTIC_ROOT" ] || { echo "attic: ATTIC_ROOT is not a directory: $ATTIC_ROOT" >&2; exit 2; }
+    (cd "$ATTIC_ROOT" && pwd); return
+  fi
+  local d; d=$(pwd)
+  while [ "$d" != "/" ]; do
+    if [ -e "$d/.attic-root" ] || [ -d "$d/.attic" ]; then printf '%s' "$d"; return; fi
+    d=$(dirname "$d")
+  done
+  if d=$(git rev-parse --show-toplevel 2>/dev/null); then printf '%s' "$d"; return; fi
+  echo "attic: no working root found. Set ATTIC_ROOT, or create .attic-root in the directory you want to be the root." >&2
+  exit 2
+}
+
+ROOT=$(resolve_root)
+ATTIC="${ATTIC_DIR:-$ROOT/.attic}"
+MAX_BYTES="${ATTIC_MAX_BYTES:-$((10 * 1024 * 1024))}"
+
+# Paths that are never worth storing: the store itself, dependency trees,
+# build output, temp space, and editor lock files.
+skip_path() {
+  case "$1" in
+    "$ATTIC"/*|*/.attic/*|*.attic) return 0 ;;
+    */node_modules/*|*/.venv/*|*/venv/*|*/site-packages/*|*/.git/*) return 0 ;;
+    */target/*|*/dist/*|*/build/*|*/__pycache__/*) return 0 ;;
+    /tmp/*|/var/tmp/*|/private/tmp/*|/var/folders/*) return 0 ;;
+    *~\$*|*.swp|*.swo|*~) return 0 ;;
+  esac
+  # Anything the user marked as ignorable.
+  if [ -n "${ATTIC_EXCLUDE:-}" ]; then
+    local pat
+    while IFS= read -r pat; do
+      [ -z "$pat" ] && continue
+      # shellcheck disable=SC2254
+      case "$1" in $pat) return 0 ;; esac
+    done <<< "${ATTIC_EXCLUDE//:/$'\n'}"
+  fi
+  return 1
+}
+
+# .attic/<path mirrored from root>/<file name>/<UTC>.<hash8>.<ext>
+# Files outside the root are mirrored under _external/ so they are covered too.
+version_dir() {
+  local abs="$1" rel
+  case "$abs" in
+    "$ROOT"/*) rel="${abs#"$ROOT"/}" ;;
+    *)         rel="_external/${abs#/}" ;;
+  esac
+  printf '%s/%s' "$ATTIC" "$rel"
+}
+
+abs_path() {
+  # Resolve without requiring the file to exist yet.
+  local d b
+  d=$(dirname -- "$1"); b=$(basename -- "$1")
+  printf '%s/%s' "$(cd -- "$d" 2>/dev/null && pwd)" "$b"
+}
+
+snap_one() {
+  local f="$1" abs vdir hash ext base stamp dest
+  [ -f "$f" ] || return 0                 # nothing to preserve
+  [ -L "$f" ] && f=$(readlink -f -- "$f" 2>/dev/null || printf '%s' "$f")
+  abs=$(abs_path "$f")
+  skip_path "$abs" && return 0
+
+  local size; size=$(wc -c < "$abs" | tr -d ' ')
+  if [ "$size" -gt "$MAX_BYTES" ]; then
+    echo "attic: skipped (over ${MAX_BYTES} bytes): $abs" >&2; return 0
+  fi
+
+  hash=$(shasum -a 1 -- "$abs" 2>/dev/null | cut -c1-8) || \
+  hash=$(sha1sum -- "$abs" | cut -c1-8)        # GNU coreutils fallback
+  base=$(basename -- "$abs"); ext="${base##*.}"; [ "$ext" = "$base" ] && ext=""
+  vdir=$(version_dir "$abs")
+  mkdir -p -- "$vdir"
+
+  # Content dedupe: these exact bytes are already stored.
+  if find "$vdir" -maxdepth 1 -name "*.$hash.*" -o -maxdepth 1 -name "*.$hash" 2>/dev/null | grep -q .; then
+    return 0
+  fi
+
+  stamp=$(date -u +%Y-%m-%dT%H%M%SZ)
+  if [ -n "$ext" ]; then dest="$vdir/$stamp.$hash.$ext"; else dest="$vdir/$stamp.$hash"; fi
+  cp -p -- "$abs" "$dest"
+  echo "attic: $abs -> $dest"
+}
+
+case "${1:-}" in
+  --root) printf '%s\n' "$ROOT" ;;
+  --list)
+    shift; [ $# -eq 1 ] || { echo "attic: --list takes one file" >&2; exit 1; }
+    d=$(version_dir "$(abs_path "$1")")
+    if [ -d "$d" ]; then ls -1t -- "$d"; else echo "no versions stored for $1"; fi ;;
+  --restore)
+    shift; [ $# -eq 2 ] || { echo "attic: --restore takes <version> <target>" >&2; exit 1; }
+    src="$1"; target="$2"
+    [ -f "$src" ] || { echo "attic: no such version: $src" >&2; exit 1; }
+    snap_one "$target"          # never let a restore destroy the newer file
+    cp -p -- "$src" "$target"; echo "attic: restored $src -> $target" ;;
+  -h|--help|"")
+    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:+0}" ;;
+  --*) echo "attic: unknown option: $1" >&2; exit 1 ;;
+  *) for f in "$@"; do snap_one "$f"; done ;;
+esac

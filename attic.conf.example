@@ -1,0 +1,12 @@
+# Immutable zones — paths that hold records, not working files.
+#
+# One rule per line:  <glob>  <reason shown when a write is denied>
+# Lines beginning with # are ignored. Without this file, nothing is denied.
+#
+# The test for whether something belongs here: would its value be destroyed
+# if it turned out to have been edited after the fact? If yes, it is a record.
+
+*/invoices-sent/*        Immutable zone: an invoice as sent is a record, not a draft. Regenerate into the working copy instead.
+*/delivered/*            Immutable zone: this holds a document exactly as it was delivered. Correct the source and regenerate; never edit the delivered copy.
+*/audit-logs/*           Immutable zone: an audit log that can be edited proves nothing.
+*/signed/*               Immutable zone: countersigned documents are evidence. Store a new version alongside rather than editing this one.

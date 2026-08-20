@@ -1,0 +1,6 @@
+.attic/
+attic.conf
+.attic-root
+.DS_Store
+*.bak-*
+.testtmp/
