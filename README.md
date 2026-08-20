@@ -195,7 +195,8 @@ to commit.
 ## Tests
 
 ```bash
-tests/test-attic.sh
+tests/test-attic.sh          # does it do what it claims
+tests/test-adversarial.sh    # can the claims be broken
 ```
 
 42 tests covering root resolution, deduplication, filenames with spaces,
@@ -205,7 +206,15 @@ Two are security regressions for a case-sensitivity bypass that let a write
 past the immutable-zone guard by changing the case of a path. The suite runs in
 a throwaway root and cleans up after itself, and CI runs it on macOS and Linux
 because the filesystem differences between them decide whether the zone guard
-    # works at all.
+works at all.
+
+The adversarial suite adds 29 probes that attack the claims rather than confirm
+them: write and delete races against the snapshot, symlink chains, loops, broken
+links and links into excluded directories, zone-guard patterns in every case
+combination, malformed configuration, empty-array expansion under bash 3.2,
+25 simultaneous snapshots of one file, and whether any crafted path can cause a
+write outside the store or execute a command. Two real bugs came out of it, both
+in the zone guard, both silent failures.
 
 ## Why this exists
 

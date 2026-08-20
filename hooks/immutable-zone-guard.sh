@@ -42,6 +42,12 @@ f="$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.notebook
 # Config format, one rule per line:  <glob><TAB or spaces><reason>
 # Lines starting with # and blank lines are ignored.
 while IFS= read -r line || [ -n "$line" ]; do
+  # Strip leading whitespace before anything else. Without this, an indented
+  # rule parsed to an empty pattern and was skipped silently, so a guard that
+  # looked configured enforced nothing. A rule that does not load must never
+  # fail quietly.
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"     # and trailing, including \r
   case "$line" in ''|'#'*) continue ;; esac
   pattern="${line%%[[:space:]]*}"
   reason="${line#"$pattern"}"

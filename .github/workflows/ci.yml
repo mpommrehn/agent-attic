@@ -29,6 +29,9 @@ jobs:
       - name: Run the test suite
         run: tests/test-attic.sh
 
+      - name: Run the adversarial probes
+        run: tests/test-adversarial.sh
+
       - name: Check scripts are executable
         run: |
           for f in bin/attic-snap hooks/*.sh tests/test-attic.sh; do
@@ -42,4 +45,4 @@ jobs:
       - name: Lint the shell
         run: |
           sudo apt-get update -qq && sudo apt-get install -y shellcheck
-          shellcheck --severity=warning bin/attic-snap hooks/*.sh tests/test-attic.sh
+          shellcheck --severity=warning bin/attic-snap bin/attic-run hooks/*.sh tests/*.sh
