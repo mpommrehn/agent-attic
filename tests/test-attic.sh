@@ -41,7 +41,7 @@ check "ATTIC_ROOT overrides discovery" "$(ATTIC_ROOT="$R" "$SNAP" --root)" "$R"
   && ok "finds root from a nested subdirectory" || bad "finds root from a nested subdirectory"
 
 # --- snapshot basics ----------------------------------------------------
-R=$(new_root); cd "$R"
+R=$(new_root); cd "$R" || exit 1
 printf 'version one\n' > doc.md
 "$SNAP" doc.md >/dev/null
 n=$(find .attic/doc.md -type f 2>/dev/null | wc -l | tr -d ' ')
@@ -124,7 +124,7 @@ rm -rf "$EXTHOME"
 echo
 echo "hook tests"
 if command -v jq >/dev/null 2>&1; then
-  R2=$(new_root); cd "$R2"; printf 'hook v1\n' > h.md
+  R2=$(new_root); cd "$R2" || exit 1; printf 'hook v1\n' > h.md
   printf '{"tool_input":{"file_path":"%s/h.md"}}' "$R2" | \
     ATTIC_SNAP_BIN="$SNAP" ATTIC_ROOT="$R2" bash "$REPO/hooks/attic-snapshot.sh" >/dev/null 2>&1
   [ -d "$R2/.attic/h.md" ] && ok "snapshot hook stores the target" || bad "snapshot hook stores the target"
@@ -166,7 +166,7 @@ else
   echo "  skip  hook tests (jq not installed)"
 fi
 
-cd /; rm -rf "$TESTTMP" 2>/dev/null
+cd / || exit 1; rm -rf "$TESTTMP" 2>/dev/null
 echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

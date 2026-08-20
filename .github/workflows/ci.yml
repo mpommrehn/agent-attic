@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # Both matter. macOS is where this is developed and where the
+    # case-insensitive filesystem behaviour the zone guard depends on is real.
+    # Ubuntu is where the BSD-vs-GNU differences show up: shasum against
+    # sha1sum, mktemp templates, and a case-sensitive filesystem.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the shell and tools under test
+        run: |
+          bash --version | head -1
+          command -v jq && jq --version
+          command -v shasum || command -v sha1sum
+
+      - name: Run the test suite
+        run: tests/test-attic.sh
+
+      - name: Check scripts are executable
+        run: |
+          for f in bin/attic-snap hooks/*.sh tests/test-attic.sh; do
+            test -x "$f" || { echo "not executable: $f"; exit 1; }
+          done
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint the shell
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          shellcheck --severity=warning bin/attic-snap hooks/*.sh tests/test-attic.sh
