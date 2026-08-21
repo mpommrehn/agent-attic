@@ -181,6 +181,42 @@ if command -v jq >/dev/null 2>&1; then
   echo "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
     && ok "zone guard matches mixed case in path and extension" \
     || bad "zone guard matches mixed case in path and extension" "$out"
+
+  # Security regressions from a 2026-08-21 review: the guard matched only the
+  # literal payload string, so a symlink alias created in an unguarded
+  # directory, a symlinked directory, or a relative path reached the record
+  # without a deny.
+  mkdir -p "$R2/audit-logs" "$R2/drafts"
+  printf 'record\n' > "$R2/audit-logs/real.md"
+  ln -s "$R2/audit-logs/real.md" "$R2/drafts/alias.md"
+  out=$(printf '{"tool_input":{"file_path":"%s/drafts/alias.md"}}' "$R2" | ATTIC_CONF="$CONF" bash "$REPO/hooks/immutable-zone-guard.sh")
+  echo "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+    && ok "zone guard is not bypassed by a symlink alias" \
+    || bad "zone guard is not bypassed by a symlink alias" "$out"
+
+  ln -s "$R2/audit-logs" "$R2/dirlink"
+  out=$(printf '{"tool_input":{"file_path":"%s/dirlink/real.md"}}' "$R2" | ATTIC_CONF="$CONF" bash "$REPO/hooks/immutable-zone-guard.sh")
+  echo "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+    && ok "zone guard is not bypassed by a symlinked directory" \
+    || bad "zone guard is not bypassed by a symlinked directory" "$out"
+
+  out=$(cd "$R2" && printf '{"tool_input":{"file_path":"audit-logs/real.md"}}' | ATTIC_CONF="$CONF" bash "$REPO/hooks/immutable-zone-guard.sh")
+  echo "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+    && ok "zone guard is not bypassed by a relative path" \
+    || bad "zone guard is not bypassed by a relative path" "$out"
+
+  # Without jq the guard cannot parse the payload. With rules configured it
+  # must fail closed (exit 2 blocks the tool call) and say why on stderr;
+  # silently allowing everything is the one failure mode it must never have.
+  STUB=$(mktemp -d "$TESTTMP/stub.XXXXXX")
+  for t in cat grep dirname basename readlink; do ln -s "$(command -v "$t")" "$STUB/$t"; done
+  printf '{"tool_input":{"file_path":"/x/audit-logs/y.md"}}' | ATTIC_CONF="$CONF" PATH="$STUB" /bin/bash "$REPO/hooks/immutable-zone-guard.sh" >/dev/null 2>&1
+  check "guard without jq blocks when rules are configured" "$?" "2"
+  errout=$(printf '{"tool_input":{"file_path":"/x/audit-logs/y.md"}}' | ATTIC_CONF="$CONF" PATH="$STUB" /bin/bash "$REPO/hooks/immutable-zone-guard.sh" 2>&1 >/dev/null)
+  echo "$errout" | grep -q jq && ok "guard without jq explains itself" || bad "guard without jq explains itself" "$errout"
+  printf '{"tool_input":{"file_path":"/x/audit-logs/y.md"}}' | ATTIC_CONF=/nonexistent PATH="$STUB" /bin/bash "$REPO/hooks/immutable-zone-guard.sh" >/dev/null 2>&1
+  check "guard without jq stays quiet when nothing is configured" "$?" "0"
+  rm -rf "$STUB"
   rm -f "$CONF"
 else
   echo "  skip  hook tests (jq not installed)"

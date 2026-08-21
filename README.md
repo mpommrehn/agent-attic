@@ -157,7 +157,11 @@ Then register the guard the same way as the snapshot hook:
 ```
 
 Writes to a matching path are denied outright, and the agent is told why in
-your own words. Without `attic.conf`, the guard denies nothing.
+your own words. Rules match the canonical path as well as the literal one, so
+a symlink alias or a relative path cannot slip past them. Without
+`attic.conf`, the guard denies nothing. With rules configured but `jq`
+missing, it blocks writes instead of silently allowing everything: a guard
+that fails must fail closed.
 
 ## Configuration
 
@@ -201,14 +205,15 @@ tests/test-attic.sh          # does it do what it claims
 tests/test-adversarial.sh    # can the claims be broken
 ```
 
-53 tests covering root resolution, deduplication, filenames with spaces,
+59 tests covering root resolution, deduplication, filenames with spaces,
 exclusions, the size limit, list and restore, external files, the command
 wrapper, and both hooks.
 Two are security regressions for a case-sensitivity bypass that let a write
-past the immutable-zone guard by changing the case of a path. Ten more are
-regressions from a 2026-08 review: a restore now refuses to overwrite a file
-whose current content it could not preserve, and `attic-run` refuses to run
-the command at all when snapshotting fails. The suite runs in
+past the immutable-zone guard by changing the case of a path. Sixteen more
+are regressions from a 2026-08 review: a restore now refuses to overwrite a
+file whose current content it could not preserve, `attic-run` refuses to run
+the command at all when snapshotting fails, and the zone guard canonicalizes
+paths before matching and fails closed when `jq` is missing. The suite runs in
 a throwaway root and cleans up after itself, and CI runs it on macOS and Linux
 because the filesystem differences between them decide whether the zone guard
 works at all.
