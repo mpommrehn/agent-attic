@@ -12,10 +12,10 @@
 #   attic-run --dir src -- npx prettier --write src/
 #   attic-run schema.sql -- ./migrate.sh
 #
-# Snapshots happen first and unconditionally. If the command then fails, or
-# writes garbage, or is interrupted halfway, the previous version is already
-# stored. Exit status is the command's own, so this drops into a pipeline
-# without changing its behavior.
+# Snapshots happen first and unconditionally; if a snapshot fails, the
+# command does not run at all. If the command then fails, writes garbage,
+# or is interrupted halfway, the previous version is already stored. Exit
+# status is the command's own, so this drops into a pipeline unchanged.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -58,9 +58,17 @@ fi
 # --- snapshot ------------------------------------------------------------
 # Everything this wrapper says goes to stderr. The command owns stdout, so
 # `attic-run f -- cat f | grep x` pipes the command's output and not ours.
+# A snapshot that fails blocks the run: better a refused command than a
+# destructive one with nothing preserved.
+snap_or_abort() {
+  "$SNAP" "$1" >&2 && return 0
+  echo "attic-run: could not snapshot $1; refusing to run the command" >&2
+  exit 2
+}
+
 for f in ${targets+"${targets[@]}"}; do
   if [ -f "$f" ]; then
-    "$SNAP" "$f" >&2
+    snap_or_abort "$f"
   else
     echo "attic-run: no prior version of $f (nothing to preserve)" >&2
   fi
@@ -74,7 +82,7 @@ for d in ${dirs+"${dirs[@]}"}; do
   # -print0 so newlines in filenames survive. attic-snap applies its own
   # exclusions, so build output and dependency trees drop out here.
   while IFS= read -r -d '' f; do
-    "$SNAP" "$f" >&2
+    snap_or_abort "$f"
   done < <(find "$d" -type f -print0 2>/dev/null)
 done
 

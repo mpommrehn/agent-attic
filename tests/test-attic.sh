@@ -112,6 +112,26 @@ grep -rq 'version three, never stored' .attic/doc.md \
 "$SNAP" --restore missing-version doc.md >/dev/null 2>&1
 check "--restore on a missing version fails loudly" "$?" "1"
 
+# A restore must refuse to proceed when it cannot preserve the file it is
+# about to overwrite. The pre-restore snapshot can be silently skipped (size
+# cap, exclusion), and quietly overwriting anyway is exactly the data loss
+# the README promises cannot happen. Found by review 2026-08-21.
+printf 'small\n' > guard.txt
+"$SNAP" guard.txt >/dev/null
+gstored=$(find .attic/guard.txt -type f | head -1)
+printf 'newer and bigger\n' > guard.txt
+ATTIC_MAX_BYTES=5 "$SNAP" --restore "$gstored" guard.txt >/dev/null 2>&1
+check "--restore refuses when the target is over the size cap" "$?" "1"
+check "the oversize target survives the refused restore" "$(cat guard.txt)" "newer and bigger"
+
+printf 'excluded newer\n' > guard.txt
+ATTIC_EXCLUDE='*/guard.txt' "$SNAP" --restore "$gstored" guard.txt >/dev/null 2>&1
+check "--restore refuses when the target matches an exclusion" "$?" "1"
+check "the excluded target survives the refused restore" "$(cat guard.txt)" "excluded newer"
+
+"$SNAP" --restore "$gstored" fresh-copy.txt >/dev/null 2>&1
+check "--restore into a target that does not exist still works" "$(cat fresh-copy.txt 2>/dev/null)" "small"
+
 # --- external files -----------------------------------------------------
 # Outside the root, but not inside an excluded temp path.
 EXTHOME="$TESTTMP/external-$$"; mkdir -p "$EXTHOME"; printf 'outside\n' > "$EXTHOME/o.md"
@@ -206,6 +226,25 @@ check "missing -- is rejected" "$?" "2"
 check "empty command is rejected" "$?" "2"
 "$RUN" --dir nonexistent -- true >/dev/null 2>&1
 check "a missing --dir is rejected" "$?" "2"
+
+# If snapshotting fails, the command must not run at all: "snapshots happen
+# first" is only a guarantee if a failed snapshot blocks the destructive
+# step. Found by review 2026-08-21.
+printf 'vital\n' > vital.txt
+ATTIC_SNAP_BIN=/nonexistent-attic-snap "$RUN" vital.txt -- sh -c 'printf clobbered > vital.txt' >/dev/null 2>&1
+check "refuses to run when the snapshot tool fails" "$?" "2"
+check "the target survives the refused run" "$(cat vital.txt)" "vital"
+
+ATTIC_SNAP_BIN=/nonexistent-attic-snap "$RUN" --dir tree -- sh -c 'printf x > tree/a.txt' >/dev/null 2>&1
+check "--dir refuses to run when the snapshot tool fails" "$?" "2"
+check "--dir targets survive the refused run" "$(cat tree/a.txt)" "a"
+
+NOROOT=$(mktemp -d "${TMPDIR:-/tmp}/attic-noroot.XXXXXX")
+printf 'orig\n' > "$NOROOT/f.txt"
+(cd "$NOROOT" && "$RUN" f.txt -- sh -c 'printf gone > f.txt') >/dev/null 2>&1
+check "refuses to run when no working root exists" "$?" "2"
+check "the rootless target is untouched" "$(cat "$NOROOT/f.txt")" "orig"
+rm -rf "$NOROOT"
 
 # Arguments must reach the command untouched.
 out=$("$RUN" out.txt -- printf '%s|%s' 'two words' 'x*y')

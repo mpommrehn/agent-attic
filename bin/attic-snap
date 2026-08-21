@@ -77,6 +77,16 @@ abs_path() {
   printf '%s/%s' "$(cd -- "$d" 2>/dev/null && pwd)" "$b"
 }
 
+content_hash() {
+  shasum -a 1 -- "$1" 2>/dev/null | cut -c1-8 \
+    || sha1sum -- "$1" | cut -c1-8             # GNU coreutils fallback
+}
+
+# True when the store already holds these exact bytes for this file.
+has_version() {
+  find "$1" -maxdepth 1 -name "*.$2.*" -o -maxdepth 1 -name "*.$2" 2>/dev/null | grep -q .
+}
+
 snap_one() {
   local f="$1" abs vdir hash ext base stamp dest
   [ -f "$f" ] || return 0                 # nothing to preserve
@@ -89,16 +99,13 @@ snap_one() {
     echo "attic: skipped (over ${MAX_BYTES} bytes): $abs" >&2; return 0
   fi
 
-  hash=$(shasum -a 1 -- "$abs" 2>/dev/null | cut -c1-8) || \
-  hash=$(sha1sum -- "$abs" | cut -c1-8)        # GNU coreutils fallback
+  hash=$(content_hash "$abs")
   base=$(basename -- "$abs"); ext="${base##*.}"; [ "$ext" = "$base" ] && ext=""
   vdir=$(version_dir "$abs")
   mkdir -p -- "$vdir"
 
   # Content dedupe: these exact bytes are already stored.
-  if find "$vdir" -maxdepth 1 -name "*.$hash.*" -o -maxdepth 1 -name "*.$hash" 2>/dev/null | grep -q .; then
-    return 0
-  fi
+  has_version "$vdir" "$hash" && return 0
 
   stamp=$(date -u +%Y-%m-%dT%H%M%SZ)
   if [ -n "$ext" ]; then dest="$vdir/$stamp.$hash.$ext"; else dest="$vdir/$stamp.$hash"; fi
@@ -116,7 +123,20 @@ case "${1:-}" in
     shift; [ $# -eq 2 ] || { echo "attic: --restore takes <version> <target>" >&2; exit 1; }
     src="$1"; target="$2"
     [ -f "$src" ] || { echo "attic: no such version: $src" >&2; exit 1; }
-    snap_one "$target"          # never let a restore destroy the newer file
+    # Never let a restore destroy the newer file. snap_one returns 0 on the
+    # skips that are harmless elsewhere (exclusions, size cap), so its exit
+    # status proves nothing here: check the store for the target's current
+    # bytes and refuse to overwrite them if they are not actually there.
+    if [ -f "$target" ]; then
+      snap_one "$target"
+      t="$target"
+      [ -L "$t" ] && t=$(readlink -f -- "$t" 2>/dev/null || printf '%s' "$t")
+      tabs=$(abs_path "$t")
+      if ! has_version "$(version_dir "$tabs")" "$(content_hash "$tabs")"; then
+        echo "attic: refusing to restore over $target: its current content is not in the store (excluded path, or over the size cap?)" >&2
+        exit 1
+      fi
+    fi
     cp -p -- "$src" "$target"; echo "attic: restored $src -> $target" ;;
   -h|--help|"")
     sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:+0}" ;;

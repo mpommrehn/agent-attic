@@ -97,7 +97,9 @@ attic-run schema.sql -- ./migrate.sh
 Everything before `--` is a file or `--dir` to preserve; everything after is
 the command, passed through untouched. Snapshots happen first and
 unconditionally, so if the command then fails, writes garbage, or is
-interrupted halfway, the previous version is already stored.
+interrupted halfway, the previous version is already stored. If a snapshot
+itself fails, the wrapper refuses to run the command and exits 2: better a
+refused command than a destructive one with nothing preserved.
 
 The exit status is the command's own and the wrapper's messages go to stderr,
 so it drops into a pipeline or a Makefile without changing behavior.
@@ -199,11 +201,14 @@ tests/test-attic.sh          # does it do what it claims
 tests/test-adversarial.sh    # can the claims be broken
 ```
 
-42 tests covering root resolution, deduplication, filenames with spaces,
+53 tests covering root resolution, deduplication, filenames with spaces,
 exclusions, the size limit, list and restore, external files, the command
 wrapper, and both hooks.
 Two are security regressions for a case-sensitivity bypass that let a write
-past the immutable-zone guard by changing the case of a path. The suite runs in
+past the immutable-zone guard by changing the case of a path. Ten more are
+regressions from a 2026-08 review: a restore now refuses to overwrite a file
+whose current content it could not preserve, and `attic-run` refuses to run
+the command at all when snapshotting fails. The suite runs in
 a throwaway root and cleans up after itself, and CI runs it on macOS and Linux
 because the filesystem differences between them decide whether the zone guard
 works at all.
