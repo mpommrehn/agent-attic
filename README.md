@@ -304,7 +304,9 @@ in the zone guard, both silent failures.
 
 A cleanup step in an unrelated script ended with `close every document saving
 no`. It closed every open document in a word processor and discarded unsaved
-changes without prompting. One of those documents held a day of work.
+changes without prompting. One of those documents held half an hour of
+unsaved writing, produced in a flow state that the disruption broke;
+re-creating the thoughts cost far more than the thirty minutes did.
 
 Three things were true and none of them were noticed: the command succeeded at
 its stated job, so its success masked its scope; destroying someone else's
