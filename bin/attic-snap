@@ -177,7 +177,9 @@ case "${1:-}" in
     mkdir -p -- "$(dirname -- "$target")"
     cp -p -- "$src" "$target"; echo "attic: restored $src -> $target" ;;
   -h|--help|"")
-    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+    # The whole header comment, however long it is: hard-coded line ranges
+    # went stale the moment the header was edited.
+    awk 'NR == 1 {next} !/^#/ {exit} {sub(/^# ?/, ""); print}' "$0"
     # -h is a request; a bare invocation is a usage error.
     [ -n "${1:-}" ] || exit 1
     exit 0 ;;

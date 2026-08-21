@@ -93,6 +93,16 @@ check "no arguments prints usage and exits 1" "$?" "1"
 err=$("$SNAP" 2>&1 >/dev/null)
 check "no-argument usage puts nothing on stderr" "$err" ""
 
+# Usage text runs to the end of the header comment and no further, however
+# long the header is: the old hard-coded sed line ranges went stale the
+# moment the header was edited.
+"$SNAP" -h | grep -q 'what it does not do' \
+  && ok "attic-snap usage reaches the end of its header" \
+  || bad "attic-snap usage reaches the end of its header"
+"$SNAP" -h | grep -q 'set -' \
+  && bad "attic-snap usage stops at the header" \
+  || ok "attic-snap usage stops at the header"
+
 printf 'x\n' > "file with spaces.md"
 "$SNAP" "file with spaces.md" >/dev/null 2>&1
 [ -d ".attic/file with spaces.md" ] && ok "handles spaces in filenames" || bad "handles spaces in filenames"
@@ -243,6 +253,19 @@ if command -v jq >/dev/null 2>&1; then
   printf 'not json' | ATTIC_SNAP_BIN="$SNAP" bash "$REPO/hooks/attic-snapshot.sh" >/dev/null 2>&1
   check "snapshot hook tolerates malformed input" "$?" "0"
 
+  # The snapshot hook fails closed (2026-08-21): when the snapshot cannot be
+  # taken, the write is denied with the reason, instead of proceeding
+  # silently unprotected while the hook looks installed.
+  printf 'hook v2\n' > "$R2/h2.md"
+  out=$(printf '{"tool_input":{"file_path":"%s/h2.md"}}' "$R2" | \
+    ATTIC_SNAP_BIN=/nonexistent-attic-snap ATTIC_ROOT="$R2" bash "$REPO/hooks/attic-snapshot.sh")
+  echo "$out" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+    && ok "snapshot hook denies the write when the snapshot fails" \
+    || bad "snapshot hook denies the write when the snapshot fails" "$out"
+  echo "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason' 2>/dev/null | grep -q 'h2.md' \
+    && ok "the snapshot-hook denial names the file" \
+    || bad "the snapshot-hook denial names the file" "$out"
+
   CONF=$(mktemp "${TMPDIR:-/tmp}/attic-conf.XXXXXX")
   printf '# comment\n\n*/audit-logs/*  Records, not drafts.\n' > "$CONF"
   out=$(printf '{"tool_input":{"file_path":"/x/audit-logs/y.md"}}' | ATTIC_CONF="$CONF" bash "$REPO/hooks/immutable-zone-guard.sh")
@@ -304,6 +327,12 @@ if command -v jq >/dev/null 2>&1; then
   echo "$errout" | grep -q jq && ok "guard without jq explains itself" || bad "guard without jq explains itself" "$errout"
   printf '{"tool_input":{"file_path":"/x/audit-logs/y.md"}}' | ATTIC_CONF=/nonexistent PATH="$STUB" /bin/bash "$REPO/hooks/immutable-zone-guard.sh" >/dev/null 2>&1
   check "guard without jq stays quiet when nothing is configured" "$?" "0"
+
+  # The snapshot hook cannot work at all without jq, so it blocks too.
+  printf 'hook v3\n' > "$R2/h3.md"
+  printf '{"tool_input":{"file_path":"%s/h3.md"}}' "$R2" | \
+    ATTIC_SNAP_BIN="$SNAP" PATH="$STUB" /bin/bash "$REPO/hooks/attic-snapshot.sh" >/dev/null 2>&1
+  check "snapshot hook without jq blocks the write" "$?" "2"
   rm -rf "$STUB"
   rm -f "$CONF"
 else
@@ -356,6 +385,14 @@ echo "$err" | grep -q 'excluded path' \
   || ok "--dir sweeps stay quiet about exclusions"
 
 # Argument handling
+"$RUN" -h >/dev/null 2>&1
+check "attic-run -h exits 0" "$?" "0"
+"$RUN" -h | grep -q 'pipeline' \
+  && ok "attic-run usage reaches the end of its header" \
+  || bad "attic-run usage reaches the end of its header"
+"$RUN" -h | grep -q 'set -' \
+  && bad "attic-run usage stops at the header" \
+  || ok "attic-run usage stops at the header"
 "$RUN" out.txt echo hi >/dev/null 2>&1
 check "missing -- is rejected" "$?" "2"
 "$RUN" out.txt -- >/dev/null 2>&1

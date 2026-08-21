@@ -7,8 +7,10 @@ the point. The rest of the time you want the previous version back, and `git`
 only helps if the file was committed, tracked, and clean when it happened.
 
 Attic is about 200 lines of `bash` with no dependencies beyond `jq` for the
-hooks. It stores one copy per distinct version, deduplicated by content hash,
-and it never blocks a write.
+hooks. It stores one copy per distinct version, deduplicated by content hash.
+Everything fails closed and fails loudly: if a previous version cannot be
+preserved, the destructive step is refused and the reason says why, because
+silent unprotection is the one failure mode a safety net must never have.
 
 ```
 $ attic-snap notes.md
@@ -125,9 +127,15 @@ For Claude Code, register the snapshot hook as a `PreToolUse` hook on
 ```
 
 The hook reads the tool payload on stdin, pulls out the target path, and
-snapshots that file before the tool changes it. It never denies a write and
-never reports failure into the session: a backup mechanism that can break the
-thing it protects is worse than none.
+snapshots that file before the tool changes it. It fails closed: if the
+snapshot cannot be taken (no resolvable root, a broken install, missing
+`jq`), the write is denied with the reason, because an edit that silently
+proceeds unprotected defeats the point of installing the hook. Brand-new
+files pass through untouched, and policy skips (exclusions, the size cap)
+count as success. Register it per project rather than in user-level
+settings: in a directory with no resolvable working root the hook blocks
+writes by design, which is what you want in a protected project and pure
+friction everywhere else.
 
 To confirm it is working, edit any existing file through the agent and run
 `attic-snap --list` on it. A version should be there.
@@ -210,19 +218,19 @@ tests/test-attic.sh          # does it do what it claims
 tests/test-adversarial.sh    # can the claims be broken
 ```
 
-69 tests covering root resolution, deduplication, filenames with spaces,
+83 tests covering root resolution, deduplication, filenames with spaces,
 exclusions, the size limit, list and restore, external files, the command
 wrapper, and both hooks.
 Two are security regressions for a case-sensitivity bypass that let a write
-past the immutable-zone guard by changing the case of a path. Twenty-six
-more are regressions from a 2026-08 review: a restore refuses to overwrite a
-file whose current content it could not preserve, `attic-run` refuses to run
-the command at all when snapshotting fails, the zone guard canonicalizes
-paths before matching and fails closed when `jq` is missing, excluded
-explicit targets say they were skipped, `--list` and `--restore` survive a
-deleted parent directory, `--dir` follows symlinks, and a stored version's
-name always matches its bytes because the copy is hashed, not the live
-file. The suite runs in
+past the immutable-zone guard by changing the case of a path. Most of the
+rest are regressions from a 2026-08 review: a restore refuses to overwrite a
+file whose current content it could not preserve, `attic-run` and the
+snapshot hook refuse to proceed when snapshotting fails, the zone guard
+canonicalizes paths before matching and fails closed when `jq` is missing,
+excluded explicit targets say they were skipped, `--list` and `--restore`
+survive a deleted parent directory, `--dir` follows symlinks, and a stored
+version's name always matches its bytes because the copy is hashed, not the
+live file. The suite runs in
 a throwaway root and cleans up after itself, and CI runs it on macOS and Linux
 because the filesystem differences between them decide whether the zone guard
 works at all.
