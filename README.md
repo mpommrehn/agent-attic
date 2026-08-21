@@ -330,7 +330,8 @@ smaller there. Ideas, in rough value order, none taken yet:
   of files instead of one per file; the likely 3-5x win for unchanged
   sweeps. Not done yet because the output has to be correlated back to
   filenames positionally and newline-safely, and that is easy to get subtly
-  wrong. It should arrive with adversarial probes for exactly that.
+  wrong. The full design, its traps, and the probes it must ship with are
+  in [docs/batch-hashing.md](docs/batch-hashing.md).
 - **Batched size checks.** The per-file `wc -c` could be one `stat` call
   per chunk. Same positional-correlation caveat, smaller win.
 - **An opt-in mtime+size cache.** Skip hashing files whose size and mtime
