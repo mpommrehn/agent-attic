@@ -6,7 +6,7 @@
 # Separate from test-attic.sh on purpose. That suite asserts the tool does what
 # it claims. This one attacks the claims: races, symlink games, malformed
 # config, concurrency, and containment. Every probe here exists because the
-# behaviour was assumed rather than verified.
+# behavior was assumed rather than verified.
 #
 # A probe that passes is not proof of safety. It is one fewer way in.
 set -uo pipefail
