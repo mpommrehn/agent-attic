@@ -26,7 +26,9 @@ attic: restored .attic/notes.md/2026-08-20T144428Z.c88cbd31.md -> notes.md
 ```
 
 Restoring snapshots the current file first, so recovering an old version can
-never destroy the newer one.
+never destroy the newer one. If that safety snapshot cannot be stored, the
+restore is refused instead; see
+[If something is refused](#if-something-is-refused).
 
 ## Documentation
 
@@ -56,6 +58,10 @@ export PATH="$PWD/bin:$PATH"      # add to ~/.zshrc or ~/.bash_profile to keep i
 `zsh` and `bash` read different startup files, so a `PATH` entry in one is
 invisible to a fresh shell of the other kind. To confirm it worked, open a new
 terminal and run `command -v attic-snap`.
+
+Runs on macOS and Linux with the system `bash` (3.2 is enough). The two hooks
+need `jq`; nothing else does. Hashing uses `openssl`, `shasum`, or `sha1sum`,
+whichever is present.
 
 ## Mark the directory you want protected
 
@@ -105,7 +111,9 @@ itself fails, the wrapper refuses to run the command and exits 2: better a
 refused command than a destructive one with nothing preserved.
 
 The exit status is the command's own and the wrapper's messages go to stderr,
-so it drops into a pipeline or a Makefile without changing behavior.
+so it drops into a pipeline or a Makefile without changing behavior. The one
+exception: exit status 2 together with an `attic-run:` line on stderr means
+the wrapper refused before running anything at all.
 
 ### Automatically, for every agent edit
 
@@ -139,7 +147,9 @@ writes by design, which is what you want in a protected project and pure
 friction everywhere else.
 
 To confirm it is working, edit any existing file through the agent and run
-`attic-snap --list` on it. A version should be there.
+`attic-snap --list` on it. A version should be there. If the hook refuses a
+write instead, [If something is refused](#if-something-is-refused) maps
+every message to its fix.
 
 Other agent runtimes can use the same script if they can run a command before a
 file write and hand it JSON with a `file_path` field. `attic-snap` itself has no
@@ -167,10 +177,56 @@ Then register the guard the same way as the snapshot hook:
 
 Writes to a matching path are denied outright, and the agent is told why in
 your own words. Rules match the canonical path as well as the literal one, so
-a symlink alias or a relative path cannot slip past them. Without
-`attic.conf`, the guard denies nothing. With rules configured but `jq`
-missing, it blocks writes instead of silently allowing everything: a guard
-that fails must fail closed.
+a symlink alias or a relative path cannot slip past them. Matching is
+case-insensitive, because case-insensitive filesystems make `/records/` and
+`/Records/` the same directory; on a case-sensitive filesystem this errs
+toward denying a lookalike path, which is the cheap direction to be wrong in.
+Without `attic.conf`, the guard denies nothing. With rules configured but
+`jq` missing, it blocks writes instead of silently allowing everything: a
+guard that fails must fail closed.
+
+## If something is refused
+
+Attic blocks a step only when proceeding would leave you unprotected, and it
+always says why. In an agent session you notice it as an edit the agent
+reports as denied, with the reason attached; on the command line the reason
+is on stderr. The messages, what they mean, and what to do:
+
+**`could not snapshot ... (attic: no working root found ...)`** — the
+snapshot hook fired in a project attic does not know about. Either mark the
+root you want protected (`touch .attic-root` there, see
+[above](#mark-the-directory-you-want-protected)), or remove the hook from
+this project's `.claude/settings.json` if the project should not be
+protected. This is the most common refusal by far, and it is a setup
+message, not a bug.
+
+**`could not snapshot ...`** with any other reason — the hook ran but the
+snapshot failed: a wrong hook path in `settings.json`, a moved clone, an
+unreadable file. The parenthetical is the underlying error. To see the same
+failure up close, run `attic-snap <that file>` in a terminal in the project.
+
+**`jq is not installed ...`** — both hooks read the tool payload with `jq`
+and neither can do its job without it, so both stop rather than pretend.
+`brew install jq` or `sudo apt-get install -y jq` and the block is gone.
+
+**Your own zone reason**, like `Immutable zone: ...` — the guard is doing
+what `attic.conf` told it to. If that file genuinely needs editing, change
+or remove the matching rule. There is deliberately no override flag.
+
+**`attic-run: could not snapshot ...; refusing to run the command`** — the
+stderr line above it is the specific failure. Fix that, or run the command
+without the wrapper if you accept losing the previous versions.
+
+**`attic: refusing to restore over ...`** — the file currently at the
+restore target could not be stored (over the size cap, or on an excluded
+path), and restore never overwrites what it cannot preserve. Raise the cap
+for one run (`ATTIC_MAX_BYTES=52428800 attic-snap --restore ...`), or move
+the current file aside yourself and restore into the empty spot.
+
+None of this can trap you. Removing the hook entries from
+`.claude/settings.json` stops all blocking immediately. The store is plain
+files with no daemon and no state anywhere else, so `rm -rf .attic` removes
+every trace, and uninstalling is deleting the clone.
 
 ## Configuration
 
@@ -260,6 +316,34 @@ The specific loss was in-memory, and no version store could have caught it.
 But the incident made something else obvious: the working root kept no prior
 copy of anything, and every agent editing files in it was one bad instruction
 away from an unrecoverable overwrite. That gap is what this fixes.
+
+## Future performance ideas
+
+Where it stands, measured on an Intel Mac in 2026-08: a 200-file
+`attic-run --dir` sweep takes about 14 s the first time and 7 s when nothing
+changed, roughly 35 ms per unchanged file. That is already down 3x from the
+per-file-process design, and the remaining cost is process startup for the
+hash, not I/O. Linux forks are cheaper, so both the pain and the gains are
+smaller there. Ideas, in rough value order, none taken yet:
+
+- **Chunked batch hashing.** One `openssl dgst -sha1 -r` call for hundreds
+  of files instead of one per file; the likely 3-5x win for unchanged
+  sweeps. Not done yet because the output has to be correlated back to
+  filenames positionally and newline-safely, and that is easy to get subtly
+  wrong. It should arrive with adversarial probes for exactly that.
+- **Batched size checks.** The per-file `wc -c` could be one `stat` call
+  per chunk. Same positional-correlation caveat, smaller win.
+- **An opt-in mtime+size cache.** Skip hashing files whose size and mtime
+  match the previous sweep. This is the fast path every build tool uses,
+  and it would make sweeps near-instant, but mtime can lie (some tools
+  preserve it while changing content), so it must stay opt-in and the
+  hash must remain the default.
+- **Parallel sweeps.** Per-file work is independent and the final rename
+  into the store is atomic, so an `xargs -P` style fan-out is safe. Only
+  worth it after batch hashing, which changes what there is to parallelize.
+
+None of these change what is stored or when; they only change how fast a
+sweep decides there is nothing to do.
 
 ## License
 
