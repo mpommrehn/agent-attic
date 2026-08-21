@@ -3,6 +3,17 @@
 Status: not implemented. This note exists so whoever picks it up (human or
 agent) inherits the thinking and the traps, not just the idea.
 
+## Assigning this work
+
+Handing this file to the implementing session, plus one instruction, is
+the whole handoff: follow the repo's established pattern. That means
+regression tests written first and watched fail for the right reason, the
+adversarial probes listed below shipped in the same change, and the
+benchmark re-run as the finishing check. The existing tests this note
+points at (the `cp` shim in `tests/test-attic.sh`, the store-sanity walk
+in `tests/test-adversarial.sh`) are the house style to imitate, so no one
+has to rediscover it.
+
 ## The problem
 
 A sweep (`attic-run --dir`, or `--stdin0` generally) hashes every file to

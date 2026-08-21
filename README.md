@@ -331,7 +331,11 @@ smaller there. Ideas, in rough value order, none taken yet:
   sweeps. Not done yet because the output has to be correlated back to
   filenames positionally and newline-safely, and that is easy to get subtly
   wrong. The full design, its traps, and the probes it must ship with are
-  in [docs/batch-hashing.md](docs/batch-hashing.md).
+  in [docs/batch-hashing.md](docs/batch-hashing.md). To assign the work to
+  a person or an agent, point them at that note and ask for the repo's
+  usual pattern: tests first and watched failing, the probes shipped in
+  the same change, the benchmark re-run at the end. The note names the
+  existing tests to imitate, so nobody has to rediscover the house style.
 - **Batched size checks.** The per-file `wc -c` could be one `stat` call
   per chunk. Same positional-correlation caveat, smaller win.
 - **An opt-in mtime+size cache.** Skip hashing files whose size and mtime
