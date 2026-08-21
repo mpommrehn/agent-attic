@@ -103,6 +103,25 @@ check "no-argument usage puts nothing on stderr" "$err" ""
   && bad "attic-snap usage stops at the header" \
   || ok "attic-snap usage stops at the header"
 
+# --- batch mode ---------------------------------------------------------
+# --stdin0 reads NUL-delimited paths and snapshots them in one process.
+# Spawning attic-snap per file made --dir sweeps unusably slow (~120ms of
+# process startup per file, measured 2026-08-21).
+printf 'one\n' > s1.txt && printf 'two\n' > s2.txt
+printf 's1.txt\0s2.txt\0' | "$SNAP" --stdin0 >/dev/null 2>&1
+check "--stdin0 exits 0 when every path is handled" "$?" "0"
+[ -d .attic/s1.txt ] && [ -d .attic/s2.txt ] \
+  && ok "--stdin0 snapshots every path on stdin" \
+  || bad "--stdin0 snapshots every path on stdin"
+printf 'missing-in-batch.txt\0' | "$SNAP" --stdin0 >/dev/null 2>&1
+check "--stdin0 treats a missing file as nothing to preserve" "$?" "0"
+printf 'x\n' > s3.txt && chmod 000 s3.txt
+printf 's3.txt\0s2.txt\0' | "$SNAP" --stdin0 >/dev/null 2>&1
+check "--stdin0 reports per-file failures in its exit status" "$?" "1"
+chmod 644 s3.txt
+"$SNAP" --stdin0 extra.txt >/dev/null 2>&1
+check "--stdin0 rejects file arguments" "$?" "1"
+
 printf 'x\n' > "file with spaces.md"
 "$SNAP" "file with spaces.md" >/dev/null 2>&1
 [ -d ".attic/file with spaces.md" ] && ok "handles spaces in filenames" || bad "handles spaces in filenames"

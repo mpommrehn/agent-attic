@@ -2,6 +2,7 @@
 # attic-snap — keep a copy of a file before something overwrites it.
 #
 #   attic-snap <file>...                    snapshot one or more files
+#   attic-snap --stdin0                     snapshot NUL-delimited paths from stdin
 #   attic-snap --list <file>                show stored versions of a file
 #   attic-snap --restore <version> <file>   put an old version back
 #   attic-snap --root                       print the resolved working root
@@ -76,9 +77,21 @@ abs_path() {
   # deleted, which is the recovery case the store exists for. The lexical
   # fallback is only ever used for lookups; snap_one requires an existing
   # file, so nothing stored ever goes through it.
-  local d b p
-  d=$(dirname -- "$1"); b=$(basename -- "$1")
-  if p=$(cd -- "$d" 2>/dev/null && pwd); then
+  #
+  # dirname/basename are parameter expansions and the cd resolution is
+  # cached per directory: at ~5ms per fork, per-file helper processes are
+  # what made sweeps slow.
+  local f="$1" d b p
+  while [ "${f%/}" != "$f" ] && [ "$f" != "/" ]; do f="${f%/}"; done
+  case "$f" in
+    */*) d="${f%/*}"; [ -z "$d" ] && d="/" ;;
+    *)   d="." ;;
+  esac
+  b="${f##*/}"
+  if [ "$d" = "${AP_DIR:-}" ]; then
+    printf '%s/%s' "$AP_RESOLVED" "$b"
+  elif p=$(cd -- "$d" 2>/dev/null && pwd); then
+    AP_DIR="$d"; AP_RESOLVED="$p"
     printf '%s/%s' "$p" "$b"
   else
     case "$d" in
@@ -89,14 +102,31 @@ abs_path() {
   fi
 }
 
+# SHA-1 is SHA-1 wherever it is computed; the tools differ only in startup
+# cost, and shasum is a perl script that takes ~7x as long to start as
+# openssl. Detected once, cheapest first.
+HASHER=""
+command -v openssl >/dev/null 2>&1 && HASHER=openssl
+[ -z "$HASHER" ] && command -v shasum >/dev/null 2>&1 && HASHER=shasum
+
 content_hash() {
-  shasum -a 1 -- "$1" 2>/dev/null | cut -c1-8 \
-    || sha1sum -- "$1" | cut -c1-8             # GNU coreutils fallback
+  local h
+  case "$HASHER" in
+    openssl) h=$(openssl dgst -sha1 -r < "$1" 2>/dev/null) || return 1 ;;
+    shasum)  h=$(shasum -a 1 -- "$1" 2>/dev/null) || return 1 ;;
+    *)       h=$(sha1sum -- "$1") || return 1 ;;   # GNU coreutils fallback
+  esac
+  printf '%s' "${h:0:8}"
 }
 
 # True when the store already holds these exact bytes for this file.
+# A glob loop, not find|grep: an unmatched glob stays literal and fails -e.
 has_version() {
-  find "$1" -maxdepth 1 -name "*.$2.*" -o -maxdepth 1 -name "*.$2" 2>/dev/null | grep -q .
+  local v
+  for v in "$1"/*."$2".* "$1"/*."$2"; do
+    [ -e "$v" ] && return 0
+  done
+  return 1
 }
 
 snap_one() {
@@ -123,11 +153,18 @@ snap_one() {
   vdir=$(version_dir "$abs")
   mkdir -p -- "$vdir"
 
+  # Dedupe fast path on the live file's hash, so an unchanged file costs a
+  # hash and nothing else. This is only ever a reason to skip: what gets
+  # STORED is still named by the hash of the copy below, so a torn read
+  # here can at worst delay one snapshot, never mislabel one.
+  hash=$(content_hash "$abs") || return 1
+  has_version "$vdir" "$hash" && return 0
+
   # Copy first, then hash the copy, then name it. Hashing the live file and
   # copying afterwards stores a mid-snapshot rewrite under the old hash, and
   # the dedupe below then refuses to ever store the old bytes again. The
   # final mv also means no other process sees a half-written version.
-  tmp=$(mktemp "$vdir/.tmp.XXXXXX") || return 1
+  tmp="$vdir/.tmp.$$.$((TMPN=${TMPN:-0}+1))"
   if ! cp -p -- "$abs" "$tmp"; then rm -f -- "$tmp"; return 1; fi
 
   # Zero bytes is nothing to preserve, whether the file is genuinely empty
@@ -140,8 +177,10 @@ snap_one() {
   # Content dedupe: these exact bytes are already stored.
   if has_version "$vdir" "$hash"; then rm -f -- "$tmp"; return 0; fi
 
-  base=$(basename -- "$abs"); ext="${base##*.}"; [ "$ext" = "$base" ] && ext=""
-  stamp=$(date -u +%Y-%m-%dT%H%M%SZ)
+  base="${abs##*/}"; ext="${base##*.}"; [ "$ext" = "$base" ] && ext=""
+  # One timestamp per invocation: the snapshot moment is the run, and date
+  # was one more per-file process.
+  stamp=${STAMP:=$(date -u +%Y-%m-%dT%H%M%SZ)}
   if [ -n "$ext" ]; then dest="$vdir/$stamp.$hash.$ext"; else dest="$vdir/$stamp.$hash"; fi
   if ! mv -- "$tmp" "$dest"; then rm -f -- "$tmp"; return 1; fi
   echo "attic: $abs -> $dest"
@@ -183,6 +222,16 @@ case "${1:-}" in
     # -h is a request; a bare invocation is a usage error.
     [ -n "${1:-}" ] || exit 1
     exit 0 ;;
+  --stdin0)
+    # Batch mode: one process for the whole list. Spawning attic-snap per
+    # file costs ~120ms of process startup each; a sweep pipes find output
+    # here instead. Same per-file semantics as the argument form.
+    [ $# -eq 1 ] || { echo "attic: --stdin0 takes paths on stdin, not arguments" >&2; exit 1; }
+    status=0
+    while IFS= read -r -d '' f; do
+      snap_one "$f" || status=1
+    done
+    exit "$status" ;;
   --*) echo "attic: unknown option: $1" >&2; exit 1 ;;
   *)
     # One bad file must not cost the rest of the batch its protection:

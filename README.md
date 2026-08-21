@@ -82,6 +82,7 @@ attic-snap --root          # confirm it resolves to what you expect
 ```bash
 attic-snap path/to/file            # one word, before you start
 attic-snap --list path/to/file     # what versions exist
+find src -type f -print0 | attic-snap --stdin0    # a whole tree, one process
 ```
 
 ### Around a script that writes files
@@ -218,7 +219,7 @@ tests/test-attic.sh          # does it do what it claims
 tests/test-adversarial.sh    # can the claims be broken
 ```
 
-83 tests covering root resolution, deduplication, filenames with spaces,
+88 tests covering root resolution, deduplication, filenames with spaces,
 exclusions, the size limit, list and restore, external files, the command
 wrapper, and both hooks.
 Two are security regressions for a case-sensitivity bypass that let a write

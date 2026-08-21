@@ -62,10 +62,8 @@ fi
 # `attic-run f -- cat f | grep x` pipes the command's output and not ours.
 # A snapshot that fails blocks the run: better a refused command than a
 # destructive one with nothing preserved.
-# The second argument, when set, marks a sweep: attic-snap then drops
-# excluded paths quietly instead of announcing each skip.
 snap_or_abort() {
-  ATTIC_SWEEP="${2:-}" "$SNAP" "$1" >&2 && return 0
+  "$SNAP" "$1" >&2 && return 0
   echo "attic-run: could not snapshot $1; refusing to run the command" >&2
   exit 2
 }
@@ -83,14 +81,23 @@ for d in ${dirs+"${dirs[@]}"}; do
     echo "attic-run: not a directory: $d" >&2
     exit 2
   fi
-  # -print0 so newlines in filenames survive. attic-snap applies its own
-  # exclusions, so build output and dependency trees drop out here. -L so a
-  # file reached through a symlink is preserved too: the wrapped command
-  # writes through the link, and find without -L would never list it.
-  while IFS= read -r -d '' f; do
-    snap_or_abort "$f" 1
-  done < <(find -L "$d" -type f -print0 2>/dev/null)
 done
+
+if [ -n "${dirs+x}" ]; then
+  # One attic-snap process for the whole sweep; spawning one per file made
+  # sweeps unusably slow. -print0 so newlines in filenames survive, and -L
+  # so a file reached through a symlink is preserved too: the wrapped
+  # command writes through the link, and find without -L would never list
+  # it. attic-snap applies its own exclusions, and ATTIC_SWEEP keeps those
+  # skips quiet, since dropping excluded trees is what a sweep is for.
+  # With pipefail, a find that cannot enumerate a tree also lands in the
+  # refusal below rather than silently sweeping less than promised.
+  if ! { for d in "${dirs[@]}"; do find -L "$d" -type f -print0 2>/dev/null; done; } \
+      | ATTIC_SWEEP=1 "$SNAP" --stdin0 >&2; then
+    echo "attic-run: could not snapshot everything under: ${dirs[*]}; refusing to run the command" >&2
+    exit 2
+  fi
+fi
 
 # --- run -----------------------------------------------------------------
 "$@"
