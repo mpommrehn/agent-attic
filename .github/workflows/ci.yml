@@ -34,7 +34,7 @@ jobs:
 
       - name: Check scripts are executable
         run: |
-          for f in bin/attic-snap hooks/*.sh tests/test-attic.sh; do
+          for f in bin/* hooks/*.sh tests/*.sh; do
             test -x "$f" || { echo "not executable: $f"; exit 1; }
           done
 

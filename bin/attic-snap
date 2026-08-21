@@ -112,6 +112,8 @@ snap_one() {
     return 0
   fi
 
+  [ -r "$abs" ] || { echo "attic: cannot read: $abs" >&2; return 1; }
+
   local size; size=$(wc -c < "$abs" | tr -d ' ')
   if [ "$size" -gt "$MAX_BYTES" ]; then
     echo "attic: skipped (over ${MAX_BYTES} bytes): $abs" >&2; return 0
@@ -175,7 +177,17 @@ case "${1:-}" in
     mkdir -p -- "$(dirname -- "$target")"
     cp -p -- "$src" "$target"; echo "attic: restored $src -> $target" ;;
   -h|--help|"")
-    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:+0}" ;;
+    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+    # -h is a request; a bare invocation is a usage error.
+    [ -n "${1:-}" ] || exit 1
+    exit 0 ;;
   --*) echo "attic: unknown option: $1" >&2; exit 1 ;;
-  *) for f in "$@"; do snap_one "$f"; done ;;
+  *)
+    # One bad file must not cost the rest of the batch its protection:
+    # snap_one reports it, the loop keeps going, the exit status says so.
+    # (Calling snap_one in a || list also suspends set -e inside it, so an
+    # unexpected per-file failure falls through to this instead of aborting.)
+    status=0
+    for f in "$@"; do snap_one "$f" || status=1; done
+    exit "$status" ;;
 esac

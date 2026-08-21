@@ -69,6 +69,30 @@ echo "$base" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z\.[0-9a-f]{8}\.md$
 "$SNAP" nonexistent.md >/dev/null 2>&1
 check "missing file is not an error" "$?" "0"
 
+# One unreadable file must not cost the rest of the batch its protection:
+# report it, keep going, exit nonzero at the end. Found by review 2026-08-21.
+printf 'a\n' > locked.txt && printf 'b\n' > after.txt
+chmod 000 locked.txt
+err=$("$SNAP" locked.txt after.txt 2>&1 >/dev/null)
+rc=$?
+check "an unreadable file makes the batch exit nonzero" "$rc" "1"
+echo "$err" | grep -q 'cannot read' \
+  && ok "the unreadable file is reported by name" \
+  || bad "the unreadable file is reported by name" "$err"
+[ -d .attic/after.txt ] \
+  && ok "files after an unreadable one are still snapshotted" \
+  || bad "files after an unreadable one are still snapshotted"
+chmod 644 locked.txt
+
+# Usage exits: -h is a request, a bare invocation is a usage error, and
+# neither is a shell error. exit "${1:+0}" used to expand to exit "" and 255.
+"$SNAP" -h >/dev/null 2>&1
+check "-h exits 0" "$?" "0"
+"$SNAP" >/dev/null 2>&1
+check "no arguments prints usage and exits 1" "$?" "1"
+err=$("$SNAP" 2>&1 >/dev/null)
+check "no-argument usage puts nothing on stderr" "$err" ""
+
 printf 'x\n' > "file with spaces.md"
 "$SNAP" "file with spaces.md" >/dev/null 2>&1
 [ -d ".attic/file with spaces.md" ] && ok "handles spaces in filenames" || bad "handles spaces in filenames"
