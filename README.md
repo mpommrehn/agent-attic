@@ -179,7 +179,12 @@ inside a hook or a scheduled job that starts somewhere you did not choose.
 
 Always excluded: the store itself, `.git`, `node_modules`, `.venv`,
 `site-packages`, `__pycache__`, `target`, `dist`, `build`, temp directories,
-and editor swap and lock files.
+and editor swap and lock files. Naming an excluded file explicitly prints
+`skipped (excluded path)` on stderr, so silence is never mistaken for
+protection; `attic-run --dir` sweeps stay quiet about exclusions, since
+dropping those trees is what a sweep is for. Zero-byte files are not stored:
+there is nothing in them to preserve, and the store never holds an empty
+version.
 
 ## How versions are stored
 
@@ -205,15 +210,19 @@ tests/test-attic.sh          # does it do what it claims
 tests/test-adversarial.sh    # can the claims be broken
 ```
 
-59 tests covering root resolution, deduplication, filenames with spaces,
+69 tests covering root resolution, deduplication, filenames with spaces,
 exclusions, the size limit, list and restore, external files, the command
 wrapper, and both hooks.
 Two are security regressions for a case-sensitivity bypass that let a write
-past the immutable-zone guard by changing the case of a path. Sixteen more
-are regressions from a 2026-08 review: a restore now refuses to overwrite a
+past the immutable-zone guard by changing the case of a path. Twenty-six
+more are regressions from a 2026-08 review: a restore refuses to overwrite a
 file whose current content it could not preserve, `attic-run` refuses to run
-the command at all when snapshotting fails, and the zone guard canonicalizes
-paths before matching and fails closed when `jq` is missing. The suite runs in
+the command at all when snapshotting fails, the zone guard canonicalizes
+paths before matching and fails closed when `jq` is missing, excluded
+explicit targets say they were skipped, `--list` and `--restore` survive a
+deleted parent directory, `--dir` follows symlinks, and a stored version's
+name always matches its bytes because the copy is hashed, not the live
+file. The suite runs in
 a throwaway root and cleans up after itself, and CI runs it on macOS and Linux
 because the filesystem differences between them decide whether the zone guard
 works at all.

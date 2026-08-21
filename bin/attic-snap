@@ -71,10 +71,22 @@ version_dir() {
 }
 
 abs_path() {
-  # Resolve without requiring the file to exist yet.
-  local d b
+  # Resolve without requiring the file, or even its directory, to exist:
+  # --list and --restore must find versions of a file whose parent tree was
+  # deleted, which is the recovery case the store exists for. The lexical
+  # fallback is only ever used for lookups; snap_one requires an existing
+  # file, so nothing stored ever goes through it.
+  local d b p
   d=$(dirname -- "$1"); b=$(basename -- "$1")
-  printf '%s/%s' "$(cd -- "$d" 2>/dev/null && pwd)" "$b"
+  if p=$(cd -- "$d" 2>/dev/null && pwd); then
+    printf '%s/%s' "$p" "$b"
+  else
+    case "$d" in
+      /*) printf '%s/%s' "$d" "$b" ;;
+      .)  printf '%s/%s' "$PWD" "$b" ;;
+      *)  printf '%s/%s/%s' "$PWD" "$d" "$b" ;;
+    esac
+  fi
 }
 
 content_hash() {
@@ -88,28 +100,48 @@ has_version() {
 }
 
 snap_one() {
-  local f="$1" abs vdir hash ext base stamp dest
+  local f="$1" abs vdir hash ext base stamp dest tmp
   [ -f "$f" ] || return 0                 # nothing to preserve
   [ -L "$f" ] && f=$(readlink -f -- "$f" 2>/dev/null || printf '%s' "$f")
   abs=$(abs_path "$f")
-  skip_path "$abs" && return 0
+  if skip_path "$abs"; then
+    # A skip is policy, but a silent one leaves the caller confidently
+    # unprotected. Sweeps set ATTIC_SWEEP: dropping excluded trees without
+    # a word is what a sweep is for, an explicit target is not.
+    [ -n "${ATTIC_SWEEP:-}" ] || echo "attic: skipped (excluded path): $abs" >&2
+    return 0
+  fi
 
   local size; size=$(wc -c < "$abs" | tr -d ' ')
   if [ "$size" -gt "$MAX_BYTES" ]; then
     echo "attic: skipped (over ${MAX_BYTES} bytes): $abs" >&2; return 0
   fi
+  [ "$size" -eq 0 ] && return 0           # empty: nothing to preserve
 
-  hash=$(content_hash "$abs")
-  base=$(basename -- "$abs"); ext="${base##*.}"; [ "$ext" = "$base" ] && ext=""
   vdir=$(version_dir "$abs")
   mkdir -p -- "$vdir"
 
-  # Content dedupe: these exact bytes are already stored.
-  has_version "$vdir" "$hash" && return 0
+  # Copy first, then hash the copy, then name it. Hashing the live file and
+  # copying afterwards stores a mid-snapshot rewrite under the old hash, and
+  # the dedupe below then refuses to ever store the old bytes again. The
+  # final mv also means no other process sees a half-written version.
+  tmp=$(mktemp "$vdir/.tmp.XXXXXX") || return 1
+  if ! cp -p -- "$abs" "$tmp"; then rm -f -- "$tmp"; return 1; fi
 
+  # Zero bytes is nothing to preserve, whether the file is genuinely empty
+  # or was truncated mid-snapshot: the store never holds empty versions.
+  # Checked on the copy, the only bytes that count.
+  if [ ! -s "$tmp" ]; then rm -f -- "$tmp"; return 0; fi
+
+  hash=$(content_hash "$tmp")
+
+  # Content dedupe: these exact bytes are already stored.
+  if has_version "$vdir" "$hash"; then rm -f -- "$tmp"; return 0; fi
+
+  base=$(basename -- "$abs"); ext="${base##*.}"; [ "$ext" = "$base" ] && ext=""
   stamp=$(date -u +%Y-%m-%dT%H%M%SZ)
   if [ -n "$ext" ]; then dest="$vdir/$stamp.$hash.$ext"; else dest="$vdir/$stamp.$hash"; fi
-  cp -p -- "$abs" "$dest"
+  if ! mv -- "$tmp" "$dest"; then rm -f -- "$tmp"; return 1; fi
   echo "attic: $abs -> $dest"
 }
 
@@ -127,7 +159,8 @@ case "${1:-}" in
     # skips that are harmless elsewhere (exclusions, size cap), so its exit
     # status proves nothing here: check the store for the target's current
     # bytes and refuse to overwrite them if they are not actually there.
-    if [ -f "$target" ]; then
+    # An empty target is nothing to destroy (and is never stored), so -s.
+    if [ -s "$target" ]; then
       snap_one "$target"
       t="$target"
       [ -L "$t" ] && t=$(readlink -f -- "$t" 2>/dev/null || printf '%s' "$t")
@@ -137,6 +170,9 @@ case "${1:-}" in
         exit 1
       fi
     fi
+    # Recreate a deleted parent: restoring a file whose tree is gone is the
+    # recovery scenario, not an error.
+    mkdir -p -- "$(dirname -- "$target")"
     cp -p -- "$src" "$target"; echo "attic: restored $src -> $target" ;;
   -h|--help|"")
     sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:+0}" ;;

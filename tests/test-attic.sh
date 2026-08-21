@@ -93,6 +93,17 @@ ATTIC_MAX_BYTES=2 "$SNAP" big.bin >/dev/null 2>&1
 ATTIC_EXCLUDE='*/secret/*' bash -c "mkdir -p secret && printf 's\n' > secret/k.txt && '$SNAP' secret/k.txt" >/dev/null 2>&1
 [ ! -d ".attic/secret" ] && ok "respects ATTIC_EXCLUDE" || bad "respects ATTIC_EXCLUDE"
 
+# A skipped explicit target must say so: exit 0 with no output reads as
+# protection the caller does not have. Found by review 2026-08-21. Sweeps
+# (attic-run --dir) set ATTIC_SWEEP to keep exclusions quiet, since dropping
+# excluded trees silently is what a sweep is for.
+err=$("$SNAP" node_modules/pkg.js 2>&1 >/dev/null)
+echo "$err" | grep -q 'skipped (excluded path)' \
+  && ok "an excluded target says it was skipped" \
+  || bad "an excluded target says it was skipped" "$err"
+err=$(ATTIC_SWEEP=1 "$SNAP" node_modules/pkg.js 2>&1 >/dev/null)
+check "ATTIC_SWEEP keeps exclusion skips quiet" "$err" ""
+
 # --- list and restore ---------------------------------------------------
 out=$("$SNAP" --list doc.md)
 check "--list shows both versions" "$(echo "$out" | wc -l | tr -d ' ')" "2"
@@ -131,6 +142,59 @@ check "the excluded target survives the refused restore" "$(cat guard.txt)" "exc
 
 "$SNAP" --restore "$gstored" fresh-copy.txt >/dev/null 2>&1
 check "--restore into a target that does not exist still works" "$(cat fresh-copy.txt 2>/dev/null)" "small"
+
+# Recovery case: the parent tree was deleted but the store still has the
+# file. abs_path used to mangle the path when cd failed, so --list looked in
+# _external/ and found nothing. Found by review 2026-08-21.
+mkdir -p src && printf 'keep\n' > src/notes.md
+"$SNAP" src/notes.md >/dev/null
+rm -rf src
+"$SNAP" --list src/notes.md | grep -Eq '^[0-9]{4}-.*\.[0-9a-f]{8}\.md$' \
+  && ok "--list finds versions after the parent directory was deleted" \
+  || bad "--list finds versions after the parent directory was deleted" "$("$SNAP" --list src/notes.md)"
+sv=$(find .attic/src/notes.md -type f 2>/dev/null | head -1)
+"$SNAP" --restore "$sv" src/notes.md >/dev/null 2>&1
+check "--restore recreates a deleted parent directory" "$(cat src/notes.md 2>/dev/null)" "keep"
+
+# A zero-byte state is nothing to preserve: storing it violates the store's
+# no-empty-versions invariant (see tests/test-adversarial.sh), and restoring
+# it would only ever recreate an empty file. The check is on the copied
+# bytes, so a file truncated mid-snapshot is discarded too.
+: > hollow.txt
+"$SNAP" hollow.txt >/dev/null 2>&1
+rc=$?
+[ "$rc" = "0" ] && [ ! -d .attic/hollow.txt ] \
+  && ok "an empty file is not stored" \
+  || bad "an empty file is not stored" "exit $rc, stored: $(find .attic/hollow.txt -type f 2>/dev/null | wc -l | tr -d ' ')"
+
+# And an empty target is nothing a restore can destroy, so it must not be
+# refused for lacking a stored version.
+"$SNAP" --restore "$gstored" hollow.txt >/dev/null 2>&1
+check "--restore over an empty target proceeds" "$(cat hollow.txt 2>/dev/null)" "small"
+
+# The stored name must always match the stored bytes. A file rewritten
+# between hash and copy used to be stored under the old hash, and dedupe
+# then refused to ever store the old bytes again. The cp shim rewrites the
+# source mid-snapshot to force the race deterministically.
+printf 'content A\n' > race.txt
+RSTUB=$(mktemp -d "$TESTTMP/race.XXXXXX")
+cat > "$RSTUB/cp" <<SHIM
+#!/bin/bash
+printf 'content B\n' > "$PWD/race.txt"
+exec /bin/cp "\$@"
+SHIM
+chmod +x "$RSTUB/cp"
+PATH="$RSTUB:$PATH" "$SNAP" race.txt >/dev/null 2>&1
+stored_race=$(find .attic/race.txt -type f | head -1)
+name_hash=$(basename "$stored_race" | cut -d. -f2)
+data_hash=$( (shasum -a 1 "$stored_race" 2>/dev/null || sha1sum "$stored_race") | cut -c1-8)
+check "a mid-snapshot rewrite is stored under its own hash" "$data_hash" "$name_hash"
+printf 'content A\n' > race.txt
+"$SNAP" race.txt >/dev/null 2>&1
+grep -rq 'content A' .attic/race.txt \
+  && ok "the pre-rewrite content can still be stored afterwards" \
+  || bad "the pre-rewrite content can still be stored afterwards" "dedupe poisoned by the wrong-hash version"
+rm -rf "$RSTUB"
 
 # --- external files -----------------------------------------------------
 # Outside the root, but not inside an excluded temp path.
@@ -254,6 +318,18 @@ mkdir -p tree/sub && printf 'a\n' > tree/a.txt && printf 'b\n' > tree/sub/b.txt
 mkdir -p tree/node_modules && printf 'dep\n' > tree/node_modules/x.js
 "$RUN" --dir tree -- true >/dev/null 2>&1
 [ ! -d .attic/tree/node_modules ] && ok "--dir honors exclusions" || bad "--dir honors exclusions"
+
+# --dir must protect files reached through symlinks: the wrapped command
+# writes through the link and rewrites the target. Found by review 2026-08-21.
+mkdir -p realdir linktree && printf 'real\n' > realdir/lf.txt
+ln -s "$PWD/realdir/lf.txt" linktree/link.txt
+"$RUN" --dir linktree -- true >/dev/null 2>&1
+[ -d .attic/realdir/lf.txt ] && ok "--dir follows symlinks to files" || bad "--dir follows symlinks to files"
+
+err=$("$RUN" --dir tree -- true 2>&1 >/dev/null)
+echo "$err" | grep -q 'excluded path' \
+  && bad "--dir sweeps stay quiet about exclusions" "$err" \
+  || ok "--dir sweeps stay quiet about exclusions"
 
 # Argument handling
 "$RUN" out.txt echo hi >/dev/null 2>&1
